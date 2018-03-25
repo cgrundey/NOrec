@@ -34,13 +34,12 @@
 #include <errno.h>
 
 #include "rand_r_32.h"
-#include "versioned lock.cpp"
 
 #define CFENCE  __asm__ volatile ("":::"memory")
 #define MFENCE  __asm__ volatile ("mfence":::"memory")
 
 #define NUM_ACCTS    1000000
-#define NUM_TXN      100000
+#define NUM_TXN      1000
 #define TRFR_AMT     50
 #define INIT_BALANCE 1000
 
@@ -52,7 +51,6 @@ typedef struct {
 } Acct;
 
 vector<Acct> accts;
-volatile unsigned int myLocks[NUM_ACCTS];
 int numThreads;
 thread_local list<Acct> read_set;
 thread_local list<Acct> write_set;
@@ -66,7 +64,12 @@ inline unsigned long long get_real_time() {
     return time.tv_sec * 1000000000L + time.tv_nsec;
 }
 
-void tx_validate() {
+/* Aborts from transaction by throwing ann exception of type STM_exception */
+void tx_abort() {
+  throw "Transaction ABORTED";
+}
+
+int tx_validate() {
   int time;
   while(1) {
     time = global_clock;
@@ -74,17 +77,12 @@ void tx_validate() {
       continue;
     list<Acct>::iterator iterator;
     for (iterator = read_set.begin(); iterator != read_set.end(); ++iterator) {
-      if (iterator->value != accts[iterator-addr])
+      if (iterator->value != accts[iterator->addr].value)
         tx_abort();
       if (time == global_clock)
         return time;
     }
   }
-}
-
-/* Aborts from transaction by throwing ann exception of type STM_exception */
-void tx_abort() {
-  throw "Transaction ABORTED";
 }
 
 /* Where a transaction begins. Read and write sets are intialized and cleared. */
@@ -111,10 +109,10 @@ int tx_read(int addr) {
       return iterator->value;
   } // Must be in memory (i.e. vector of Accts)
 
-  int val = accts[addr];
+  int val = accts[addr].value;
   while(rv != global_clock) {
     rv = tx_validate();
-    val = accts[addr];
+    val = accts[addr].value;
   }
   Acct temp = {addr, val};
   read_set.push_back(temp);
@@ -130,6 +128,7 @@ void tx_commit() {
   while(!__sync_bool_compare_and_swap(&global_clock, rv, rv + 1))
     rv = tx_validate();
   /* Validation is a success */
+  list<Acct>::iterator iterator;
   for (iterator = write_set.begin(); iterator != write_set.end(); ++iterator) {
     accts[iterator->addr].value = iterator->value;
   }
@@ -149,8 +148,8 @@ void barrier(int which) {
 void* th_run(void * args)
 {
   long id = (long)args;
+  unsigned int tid = (unsigned int)(id);
   barrier(0);
-  srand((unsigned)time(0));
 
   list<Acct> read_set;
   list<Acct> write_set;
@@ -167,8 +166,8 @@ void* th_run(void * args)
         int r2 = 0;
         for (int j = 0; j < 10; j++) {
           while (r1 == r2) {
-            r1 = rand_r_32() % NUM_ACCTS; // rand() % NUM_ACCTS;
-            r2 = rand_r_32() % NUM_ACCTS; // rand() % NUM_ACCTS;
+            r1 = rand_r_32(&tid) % NUM_ACCTS;
+            r2 = rand_r_32(&tid) % NUM_ACCTS;
           }
           // Perform the transfer
           int a1 = tx_read(r1);
@@ -184,6 +183,7 @@ void* th_run(void * args)
         aborted = true;
       }
     } while (aborted);
+    printf("txn count: %d\n", i);
 // _________________END__________________
   }
   return 0;
@@ -205,17 +205,13 @@ int main(int argc, char* argv[]) {
 
   // Initializing 1,000,000 accounts with $1000 each
   for (int i = 0; i < NUM_ACCTS; i++) {
-    Acct temp = {i, INIT_BALANCE, 0};
+    Acct temp = {i, INIT_BALANCE};
     accts.push_back(temp);
   }
 
   long totalMoneyBefore = 0;
   for (int i = 0; i < NUM_ACCTS; i++)
     totalMoneyBefore += accts[i].value;
-
-  // Initialize locks
-  for (int i = 0; i < NUM_ACCTS; i++)
-    myLocks[i] = 0;
 
   // Thread initializations
   pthread_attr_t thread_attr;
@@ -232,13 +228,11 @@ int main(int argc, char* argv[]) {
   unsigned long long start = get_real_time();
   th_run(0);
   // Joining Threads
-  for (int i=0; i<ids-1; i++) {
+  for (int i=0; i<ids; i++) {
     pthread_join(client_th[i], NULL);
   }
 /* EXECUTION END */
-  for (int i = 0; i < NUM_ACCTS; i++) {
-    pthread_mutex_destroy(&myLocks[i]);
-  }
+
   long totalMoneyAfter = 0;
   for (int i = 0; i < NUM_ACCTS; i++)
     totalMoneyAfter += accts[i].value;
@@ -247,7 +241,6 @@ int main(int argc, char* argv[]) {
   printf("\nTotal time = %lld ns\n", get_real_time() - start);
   printf("Total Money Before: $%ld\n", totalMoneyBefore);
   printf("Total Money After:  $%ld\n", totalMoneyAfter);
-  printf("Abort Count: %ld\n\n", abort_count);
 
   return 0;
 }
