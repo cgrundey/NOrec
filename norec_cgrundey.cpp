@@ -16,7 +16,6 @@
 *   add -g option for gdb
 */
 #include <pthread.h>
-#include <list>
 #include <cstdlib>
 #include <vector>
 #include <signal.h>
@@ -28,7 +27,6 @@
 #include <sys/sem.h>
 #include <iostream>
 #include <time.h>
-#include <unordered_map>
 #include <list> // Linked list for read/write sets
 
 #include <errno.h>
@@ -101,7 +99,6 @@ bool tx_write(int addr, int val) {
 
 /* Adds account with version to read_set and returns the value for later use. */
 int tx_read(int addr) {
-  // Look in write_set first
   list<Acct>::reverse_iterator iterator;
   for (iterator = write_set.rbegin(); iterator != write_set.rend(); ++iterator) {
     if (iterator->addr == addr)
@@ -149,13 +146,11 @@ void* th_run(void * args)
   unsigned int tid = (unsigned int)(id);
   barrier(0);
 
-  list<Acct> read_set;
-  list<Acct> write_set;
   bool aborted = false;
 
   int workload = NUM_TXN / numThreads;
   for (int i = 0; i < workload; i++) {
-    printf("%d txns\n", i);
+    printf("Txn: %d\n", i+1);
 // ________________BEGIN_________________
     do {
       aborted = false;
@@ -178,7 +173,7 @@ void* th_run(void * args)
         }
         tx_commit();
       } catch(const char* msg) {
-        printf("%s\n", msg);
+        printf("ABORTED: %s", msg);
         aborted = true;
       }
     } while (aborted);
@@ -226,16 +221,14 @@ int main(int argc, char* argv[]) {
   unsigned long long start = get_real_time();
   th_run(0);
   // Joining Threads
-  for (int i=0; i<ids; i++) {
+  for (int i=0; i<numThreads; i++) {
     pthread_join(client_th[i], NULL);
   }
 /* EXECUTION END */
-
   long totalMoneyAfter = 0;
   for (int i = 0; i < NUM_ACCTS; i++)
     totalMoneyAfter += accts[i].value;
 
-  //printf("Total transfers: %d\n", actual_transfers);
   printf("\nTotal time = %lld ns\n", get_real_time() - start);
   printf("Total Money Before: $%ld\n", totalMoneyBefore);
   printf("Total Money After:  $%ld\n", totalMoneyAfter);
