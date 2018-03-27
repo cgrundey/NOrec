@@ -12,7 +12,7 @@
 * Date: March 23, 2018
 *
 * Compile:
-*   g++ norec_cgrundey.cpp -o norec -lpthread
+*   g++ norec_cgrundey.cpp -o norec -lpthread -std=c++11
 *   add -g option for gdb
 */
 #include <pthread.h>
@@ -51,12 +51,11 @@ typedef struct {
 } Acct;
 
 vector<Acct> accts;
-int numThreads;
+unsigned int numThreads;
 thread_local list<Acct> read_set;
 thread_local list<Acct> write_set;
-thread_local int rv;
-thread_local int wv;
-volatile int global_clock;
+thread_local unsigned int rv;
+volatile unsigned int global_clock;
 
 inline unsigned long long get_real_time() {
     struct timespec time;
@@ -70,17 +69,17 @@ void tx_abort() {
 }
 
 int tx_validate() {
-  int time;
+  int temp;
   while(1) {
-    time = global_clock;
-    if ((time & 1) != 0)
+    temp = global_clock;
+    if ((temp & 1) != 0)
       continue;
     list<Acct>::iterator iterator;
     for (iterator = read_set.begin(); iterator != read_set.end(); ++iterator) {
       if (iterator->value != accts[iterator->addr].value)
         tx_abort();
-      if (time == global_clock)
-        return time;
+      if (temp == global_clock)
+        return temp;
     }
   }
 }
@@ -107,8 +106,7 @@ int tx_read(int addr) {
   for (iterator = write_set.rbegin(); iterator != write_set.rend(); ++iterator) {
     if (iterator->addr == addr)
       return iterator->value;
-  } // Must be in memory (i.e. vector of Accts)
-
+  }
   int val = accts[addr].value;
   while(rv != global_clock) {
     rv = tx_validate();
@@ -157,6 +155,7 @@ void* th_run(void * args)
 
   int workload = NUM_TXN / numThreads;
   for (int i = 0; i < workload; i++) {
+    printf("%d txns\n", i);
 // ________________BEGIN_________________
     do {
       aborted = false;
@@ -176,14 +175,13 @@ void* th_run(void * args)
           int a2 = tx_read(r2);
           tx_write(r1, a1 - TRFR_AMT);
           tx_write(r2, a2 + TRFR_AMT);
-          tx_commit();
         }
+        tx_commit();
       } catch(const char* msg) {
-        // printf("%s\n", msg);
+        printf("%s\n", msg);
         aborted = true;
       }
     } while (aborted);
-    printf("txn count: %d\n", i);
 // _________________END__________________
   }
   return 0;
