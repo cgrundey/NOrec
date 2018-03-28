@@ -52,8 +52,8 @@ vector<Acct> accts;
 unsigned int numThreads;
 thread_local list<Acct> read_set;
 thread_local list<Acct> write_set;
-thread_local unsigned int rv;
-volatile unsigned int global_clock;
+thread_local unsigned int rv = 0;
+volatile unsigned int global_clock = 0;
 
 inline unsigned long long get_real_time() {
     struct timespec time;
@@ -146,12 +146,11 @@ void* th_run(void * args)
   unsigned int tid = (unsigned int)(id);
   barrier(0);
 
+// ________________BEGIN_________________
   bool aborted = false;
-
   int workload = NUM_TXN / numThreads;
   for (int i = 0; i < workload; i++) {
-    printf("Txn: %d\n", i+1);
-// ________________BEGIN_________________
+    // printf("Txn: %d\n", i+1);
     do {
       aborted = false;
       try {
@@ -173,7 +172,7 @@ void* th_run(void * args)
         }
         tx_commit();
       } catch(const char* msg) {
-        printf("ABORTED: %s", msg);
+        printf("ABORTED: %s\n", msg);
         aborted = true;
       }
     } while (aborted);
