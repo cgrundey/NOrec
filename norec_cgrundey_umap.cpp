@@ -27,7 +27,8 @@
 #include <sys/sem.h>
 #include <iostream>
 #include <time.h>
-#include <list> // Linked list for read/write sets
+#include <list> // Linked list for read sets
+#include <unordered_map> // for write-set
 
 #include <errno.h>
 
@@ -36,7 +37,7 @@
 #define CFENCE  __asm__ volatile ("":::"memory")
 #define MFENCE  __asm__ volatile ("mfence":::"memory")
 
-#define NUM_ACCTS    1000
+#define NUM_ACCTS    1000000
 #define NUM_TXN      100000
 #define TRFR_AMT     50
 #define INIT_BALANCE 1000
@@ -51,7 +52,7 @@ typedef struct {
 vector<Acct> accts;
 unsigned int numThreads;
 thread_local list<Acct> read_set;
-thread_local list<Acct> write_set;
+thread_local unordered_map<int,int> write_set;
 thread_local unsigned int rv = 0;
 volatile unsigned int global_clock = 0;
 
@@ -93,16 +94,14 @@ void tx_begin() {
 
 /* Adds a version of the account at addr to write_set with the given value. */
 bool tx_write(int addr, int val) {
-  Acct temp = {addr, val};
-  write_set.push_back(temp);
+  write_set.emplace(addr, val);
 }
 
 /* Adds account with version to read_set and returns the value for later use. */
 int tx_read(int addr) {
-  list<Acct>::reverse_iterator iterator;
-  for (iterator = write_set.rbegin(); iterator != write_set.rend(); ++iterator) {
-    if (iterator->addr == addr)
-      return iterator->value;
+  for (auto& x: write_set) {
+    if (x.first == addr)
+      return x.second;
   }
   int val = accts[addr].value;
   while(rv != global_clock) {
@@ -123,9 +122,8 @@ void tx_commit() {
   while(!__sync_bool_compare_and_swap(&global_clock, rv, rv + 1))
     rv = tx_validate();
   /* Validation is a success */
-  list<Acct>::iterator iterator;
-  for (iterator = write_set.begin(); iterator != write_set.end(); ++iterator) {
-    accts[iterator->addr].value = iterator->value;
+  for (auto& x: write_set) {
+    accts[x.first].value = x.second;
   }
   global_clock = rv + 2;
 }
